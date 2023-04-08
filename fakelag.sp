@@ -4,6 +4,8 @@
 #include <colors>
 #include <builtinvotes>
 #include <readyup>
+#undef REQUIRE_PLUGIN
+#include <l4d2center>
 
 
 Handle g_hVote;
@@ -11,6 +13,7 @@ int iYesVotes = 0;
 int iNoVotes = 0;
 
 bool bIsFirstReadyUp;
+bool bL4D2CenterAvailable;
 
 
 public OnPluginStart() {
@@ -35,6 +38,22 @@ public OnPluginStart() {
 	RegAdminCmd("sm_forcedisablefakelags", Cmd_ForceDisableFL, ADMFLAG_ROOT);
 }
 
+public void OnAllPluginsLoaded() {
+    bL4D2CenterAvailable = LibraryExists("l4d2center");
+}
+
+public void OnLibraryRemoved(const char[] sPluginName) {
+	if (strcmp(sPluginName, "l4d2center") == 0) {
+		bL4D2CenterAvailable = false;
+	}
+}
+
+public void OnLibraryAdded(const char[] sPluginName) {
+	if (strcmp(sPluginName, "l4d2center") == 0) {
+		bL4D2CenterAvailable = true;
+	}
+}
+
 Action Cmd_ForceFL(int client, int args) {
 	EquatePings();
 	return Plugin_Handled;
@@ -46,6 +65,9 @@ Action Cmd_ForceDisableFL(int client, int args) {
 }
 
 Action Cmd_VoteFakelag(int client, int args) {
+	if (bL4D2CenterAvailable && (L4D2C_GetServerReservation() == -1 || L4D2C_GetServerReservation() == 1)) {
+		return Plugin_Handled;
+	}
 	if (client > 0 && IsClientInGame(client) && GetClientTeam(client) > 1 && !IsBuiltinVoteInProgress()) {
 		int iNumPlayers;
 		int iPlayers[MAXPLAYERS + 1];
@@ -105,6 +127,9 @@ public void PingsVoteResultHandler(Handle vote, int num_votes, int num_clients, 
 }
 
 Action Cmd_SetFakelag(int client, int args) {
+	if (bL4D2CenterAvailable && (L4D2C_GetServerReservation() == -1 || L4D2C_GetServerReservation() == 1)) {
+		return Plugin_Handled;
+	}
 	if (client > 0 && IsClientInGame(client)) {
 		if (!bIsFirstReadyUp) {
 			CPrintToChat(client, "[{green}!{default}] Fake latency setting is only allowed during first readyup of the map");
