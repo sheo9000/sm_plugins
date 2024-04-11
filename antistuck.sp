@@ -9,25 +9,17 @@
 float Ground_Velocity[3] = {0.0, 0.0, 0.0};
 float fDownToFloor[3] = {90.0, 0.0, 0.0};
 float fAbleToMove[MAXPLAYERS + 1];
+float fNextTeleport[MAXPLAYERS + 1];
 float fNow;
-float fMaxTeleportRadius = 200.0;
 bool bGlobalAllowedTeleporting = true;
-float fTickrate;
-float fMoveCheck;
 
 bool bPauseAvailable;
 
 public void OnPluginStart() {
-	CreateTimer(1.0, Teleport_Callback, 0, TIMER_REPEAT);
+	CreateTimer(0.1, Teleport_Callback, 0, TIMER_REPEAT);
 	HookEvent("ability_use", Event_AbilityUse);
 	HookEvent("round_end", Event_RoundEnd);
 	HookEvent("round_start", Event_RoundStart);
-	fTickrate = 1.0 / GetTickInterval();
-	if (fTickrate >= 50) {
-		fMoveCheck = 15.0;
-	} else {
-		fMoveCheck = 20.0;
-	}
 }
 
 public void OnAllPluginsLoaded() {
@@ -79,9 +71,21 @@ public void Event_AbilityUse(Handle event, const char[] name, bool dontBroadcast
 public Action Teleport_Callback(Handle timer, any sheo) {
 	if (bGlobalAllowedTeleporting && !(bPauseAvailable && IsInPause())) {
 		for (int i = 1; i <= MaxClients; i++) {
-			if (IsClientInGame(i) && GetClientTeam(i) > 1 && IsSafeToTeleport(i)) {
-				if (IsEntityStuck(i, GetClientTeam(i) == 2 ? MASK_PLAYERSOLID : MASK_NPCSOLID)) {
-					CheckIfPlayerCanMove(i, 0, fMoveCheck, 0.0, 0.0);
+			if (IsClientInGame(i)) {
+				int iTeam = GetClientTeam(i);
+				int iStuckEngine = GetPlayerStuckEngine(i);
+				if ((iTeam == 2 && iStuckEngine > 0) || (iTeam == 3 && iStuckEngine > 500)) {
+					int iMask = iTeam == 2 ? MASK_PLAYERSOLID : MASK_NPCSOLID;
+					if (IsEntityStuck(i, iMask)) {
+						if (IsSafeToTeleport(i)) {
+							if (FixPlayerPosition(i)) {
+								PrintToChatAll("Player %N found stuck, teleported him to a valid position", i);
+							} else {
+								PrintToChatAll("Player %N found stuck, couldn't teleport him to a valid position", i);
+								fNextTeleport[i] = GetEngineTime() + 10.0; //don't try too often
+							}
+						}
+					}
 				}
 			}
 		}
@@ -89,104 +93,47 @@ public Action Teleport_Callback(Handle timer, any sheo) {
 	return Plugin_Handled;
 }
 
-void CheckIfPlayerCanMove(int iClient, int testID, float X, float Y, float Z) {
-	float vecVelo[3];
-	GetEntPropVector(iClient, Prop_Data, "m_vecBaseVelocity", vecVelo);
-	if (vecVelo[0] != 0.0 || vecVelo[1] != 0.0 || vecVelo[2] != 0.0) {
-		return;
-	}
-	float vecOrigin[3];
-	GetClientAbsOrigin(iClient, vecOrigin);
-	vecVelo[0] = vecVelo[0] + X;
-	vecVelo[1] = vecVelo[1] + Y;
-	vecVelo[2] = vecVelo[2] + Z;
-	SetEntPropVector(iClient, Prop_Data, "m_vecBaseVelocity", vecVelo);
-	Handle hData = CreateDataPack();
-	CreateTimer(0.1, TimerWait, hData);
-	WritePackCell(hData, GetClientUserId(iClient));
-	WritePackCell(hData, testID);
-	WritePackFloat(hData, vecOrigin[0]);
-	WritePackFloat(hData, vecOrigin[1]);
-	WritePackFloat(hData, vecOrigin[2]);
-}
 
-void PushPlayer(int iClient, float X, float Y, float Z) {
-	float vecVelo[3];
-	GetEntPropVector(iClient, Prop_Data, "m_vecBaseVelocity", vecVelo);
-	vecVelo[0] = vecVelo[0] + X;
-	vecVelo[1] = vecVelo[1] + Y;
-	vecVelo[2] = vecVelo[2] + Z;
-	SetEntPropVector(iClient, Prop_Data, "m_vecBaseVelocity", vecVelo);
-}
 
-public Action TimerWait(Handle timer, any hData) {
-	float vecOrigin[3];
-	float vecOriginAfter[3];
-	ResetPack(hData, false);
-	int iClient = GetClientOfUserId(ReadPackCell(hData));
-	if (bGlobalAllowedTeleporting && !(bPauseAvailable && IsInPause()) && iClient > 0 && IsClientInGame(iClient) && GetClientTeam(iClient) > 0 && IsSafeToTeleport(iClient)) {
-		int testID = ReadPackCell(hData);
-		vecOrigin[0] = ReadPackFloat(hData);
-		vecOrigin[1] = ReadPackFloat(hData);
-		vecOrigin[2] = ReadPackFloat(hData);
-		GetClientAbsOrigin(iClient, vecOriginAfter);
-		if (GetVectorDistance(vecOrigin, vecOriginAfter, false) == 0.0) {
-			if (testID == 0) {
-				CheckIfPlayerCanMove(iClient, testID + 1, -1.0 * fMoveCheck, 0.0, 0.0);
-			} else if (testID == 1) {
-				CheckIfPlayerCanMove(iClient, testID + 1, 0.0, fMoveCheck, 0.0);
-			} else if (testID == 2) {
-				CheckIfPlayerCanMove(iClient, testID + 1, 0.0, -1.0 * fMoveCheck, 0.0);
-			} else {
-				FixPlayerPosition(iClient);
-			}
-		} else {
-			if (testID == 0) {
-				PushPlayer(iClient, -1.0 * fMoveCheck, 0.0, 0.0);
-			} else if (testID == 1) {
-				PushPlayer(iClient, fMoveCheck, 0.0, 0.0);
-			} else if (testID == 2) {
-				PushPlayer(iClient, 0.0, -1.0 * fMoveCheck, 0.0);
-			} else if (testID == 3) {
-				PushPlayer(iClient, 0.0, fMoveCheck, 0.0);
-			}
+bool FixPlayerPosition(int iClient) {
+	float fMaxTeleportRadius = 200.0;
+	int iMask = GetClientTeam(iClient) == 2 ? MASK_PLAYERSOLID : MASK_NPCSOLID;
+	for (float fRadius = 0.0; fRadius <= fMaxTeleportRadius; fRadius = fRadius + 2.0) {
+		if (TryFixPosition(iClient, iMask, fRadius)) {
+			return true;
 		}
 	}
-	CloseHandle(hData);
-	return Plugin_Continue;
+	return false;
 }
 
-void FixPlayerPosition(int iClient) {
-	float pos_Z = -50.0;
-	float fRadius = 0.0;
-	int iMask = GetClientTeam(iClient) == 2 ? MASK_PLAYERSOLID : MASK_NPCSOLID;
-	while (pos_Z <= fMaxTeleportRadius && !TryFixPosition(iClient, iMask, fRadius, pos_Z)) {
-		fRadius = fRadius + 2.0;
-		pos_Z = pos_Z + 2.0;
-	}
-}
-
-bool TryFixPosition(int iClient, int iMask, float Radius, float pos_Z) {
-	float DegreeAngle;
+bool TryFixPosition(int iClient, int iMask, float Radius) {
 	float vecPosition[3];
 	float vecOrigin[3];
 	float vecAngle[3];
 	GetClientAbsOrigin(iClient, vecOrigin);
 	GetClientEyeAngles(iClient, vecAngle);
-	vecPosition[2] = vecOrigin[2] + pos_Z;
-	DegreeAngle = -180.0;
-	while (DegreeAngle < 180.0) {
-		vecPosition[0] = vecOrigin[0] + Radius * Cosine(DegreeAngle * FLOAT_PI / 180.0);
-		vecPosition[1] = vecOrigin[1] + Radius * Sine(DegreeAngle * FLOAT_PI / 180.0);
-		
-		TeleportEntity(iClient, vecPosition, vecAngle, Ground_Velocity);
-		if (!IsEntityStuck(iClient, iMask) && GetDistanceToFloor(iClient, iMask) <= 240.0) {
-			return true;
+	float PitchAngle = -90.0;
+	while (PitchAngle <= 90.0) {
+		float YawAngle = -180.0;
+		while (YawAngle < 180.0) {
+			vecPosition[0] = vecOrigin[0] + Radius * Cosine(DegreeToRadian(YawAngle)) * Cosine(DegreeToRadian(PitchAngle));
+			vecPosition[1] = vecOrigin[1] + Radius * Sine(DegreeToRadian(YawAngle)) * Cosine(DegreeToRadian(PitchAngle));
+			vecPosition[2] = vecOrigin[2] + Radius * Sine(DegreeToRadian(PitchAngle));
+			
+			TeleportEntity(iClient, vecPosition, vecAngle, Ground_Velocity);
+			if (!IsEntityStuck(iClient, iMask) && GetDistanceToFloor(iClient, iMask) <= 100.0) {
+				return true;
+			}
+			YawAngle += 10.0;
 		}
-		DegreeAngle += 10.0;
+		PitchAngle += 10.0;
 	}
 	TeleportEntity(iClient, vecOrigin, vecAngle, Ground_Velocity);
 	return false;
+}
+
+float DegreeToRadian(float angle) {
+	return angle * FLOAT_PI / 180.0;
 }
 
 bool IsEntityStuck(int iEnt, int iMask) {
@@ -198,6 +145,10 @@ bool IsEntityStuck(int iEnt, int iMask) {
 	bool bTrue = TR_DidHit(hTrace);
 	CloseHandle(hTrace);
 	return bTrue;
+}
+
+int GetPlayerStuckEngine(int client) {
+	return GetEntProp(client, Prop_Data, "m_StuckLast");
 }
 
 float GetDistanceToFloor(int client, int iMask) {
@@ -255,6 +206,8 @@ bool IsSafeToTeleport(int client) {
 	} else if (GetEntProp(client, Prop_Send, "m_isIncapacitated") == 1) {
 		return false;
 	} else if (fAbleToMove[client] != 0.0 && fNow < fAbleToMove[client]) {
+		return false;
+	} else if (fNextTeleport[client] != 0.0 && fNow < fNextTeleport[client]) {
 		return false;
 	} else {
 		return true;
