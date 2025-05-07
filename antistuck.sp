@@ -78,8 +78,9 @@ public Action Teleport_Callback(Handle timer, any sheo) {
 					int iMask = iTeam == 2 ? MASK_PLAYERSOLID : MASK_NPCSOLID;
 					if (IsEntityStuck(i, iMask)) {
 						if (IsSafeToTeleport(i)) {
-							if (FixPlayerPosition(i)) {
-								PrintToChatAll("Player %N found stuck, teleported him to a valid position", i);
+							float fDistance = FixPlayerPosition(i);
+							if (fDistance >= 0.0) {
+								PrintToChatAll("Player %N found stuck, teleported him to a valid position (%d)", i, RoundToNearest(fDistance));
 							} else {
 								PrintToChatAll("Player %N found stuck, couldn't teleport him to a valid position", i);
 								fNextTeleport[i] = GetEngineTime() + 10.0; //don't try too often
@@ -95,15 +96,15 @@ public Action Teleport_Callback(Handle timer, any sheo) {
 
 
 
-bool FixPlayerPosition(int iClient) {
-	float fMaxTeleportRadius = 200.0;
+float FixPlayerPosition(int iClient) {
+	float fMaxTeleportRadius = 100.0;
 	int iMask = GetClientTeam(iClient) == 2 ? MASK_PLAYERSOLID : MASK_NPCSOLID;
 	for (float fRadius = 0.0; fRadius <= fMaxTeleportRadius; fRadius = fRadius + 2.0) {
 		if (TryFixPosition(iClient, iMask, fRadius)) {
-			return true;
+			return fRadius;
 		}
 	}
-	return false;
+	return -1.0;
 }
 
 bool TryFixPosition(int iClient, int iMask, float Radius) {
